@@ -1,0 +1,198 @@
+## This Notebook can be can be used for Ecommerce website A/B testing Analysis purposes
+
+## Understing Data
+```{r}
+View(Test_Data)
+names(Test_Data)
+class(Test_Data)
+mode(Test_Data)
+str(Test_Data)
+```
+
+## A/B Test Summary results 
+```{r}
+
+install.packages("formattable")
+install.packages("kableExtra")
+library(kableExtra)
+library(formattable)
+library(tidyverse)
+
+Test_Data %>% group_by(SPLIT_GROUP) %>% summarise(
+  Start_Date = format(min(TEST_DATE), '%Y-%m-%d'), 
+  End_Date = format(max(TEST_DATE), '%Y-%m-%d'),
+  Test_Duration = n_distinct(format((TEST_DATE), '%Y-%m-%d')),
+  Sessions = comma(n_distinct(SESSION_ID),digit = 0), 
+  Total_Sales = sum(SALES),
+  Total_Orders = sum(ORDERS),
+  CVR = formattable::percent(sum(ORDERS)/n_distinct(SESSION_ID)), 
+  AOV= round(sum(SALES)/sum(ORDERS),2),
+  RPS = round(sum(SALES)/n_distinct(SESSION_ID),2)
+  ) %>% 
+  kbl()%>%kable_styling(bootstrap_options = c("striped", "hover", "responsive"))
+```
+
+##Lift Calculations
+```{r}
+RPS_Lift <- percent((((Test_Data%>%  summarise(t_sales = mean(case_when(SPLIT_GROUP == "TEST" ~ SALES), na.rm=TRUE)))/
+(summarise(Test_Data,t_sales = mean(case_when(SPLIT_GROUP == "CONTROL" ~ SALES), na.rm=TRUE))))-1),2)
+
+```
+
+
+## Trend Chart for CVR 
+```{r}
+Test_Data %>% mutate(TEST_DATE_1 = format(TEST_DATE, '%Y-%m-%d')) %>% 
+  group_by(TEST_DATE_1, SPLIT_GROUP) %>%
+  summarise(Daily_Sales = sum(SALES),
+           Daily_Orders = sum(ORDERS), 
+           CVR = sum(SALES)/sum(ORDERS)) %>% 
+  ggplot(aes(TEST_DATE_1, CVR, group = SPLIT_GROUP, col = SPLIT_GROUP))+
+  geom_line()
+```
+
+## Statistical significance for Sales
+```{r}
+ t.test(filter(Test_Data, SPLIT_GROUP=="CONTROL")$SALES,filter(Test_Data, SPLIT_GROUP=="TEST")$SALES, 
+ alternative= "two.sided",paired = FALSE)
+```
+
+## Scatter Plot 
+```{r}
+Test_Data %>% ggplot(aes(ORDERS,SALES))+
+  geom_point( aes(colour = SPLIT_GROUP,shape = SPLIT_GROUP))+
+  labs(title="Scatter Plot")
+```
+
+## Box Plot 
+```{r}
+Test_Data %>% filter(SALES > 0 )%>%ggplot(aes(SPLIT_GROUP, SALES))+
+  geom_boxplot()+
+  scale_y_continuous(trans = "log2")
+```
+
+
+
+
+---
+title: "AB Test Measurement Analysis"
+output: html_notebook
+---
+
+## load libraries 
+```{r}
+library(tidyverse)
+library(lubridate)
+install.packages("formattable")
+library(formattable)
+```
+
+
+##Load Data thats dowloaded from Kaggle  
+
+```{r}
+## download from  https://www.kaggle.com/saraabdelaal/abtestdata?select=ab_data.csv 
+
+##load data into R 
+
+data <- read.csv(file.choose())
+
+```
+
+
+
+## Data exploration and preperation and Wrangling 
+```{r}
+View(data)
+
+head(data)
+
+names(data)
+
+summary(data)
+
+length(unique(data$user_id))
+
+## find the accounts with both test and control experiences these are issue users and they are excluded 
+
+data_dups <- data %>% group_by(user_id) %>% summarise(counts = length(timestamp)) %>% filter(counts >1)
+
+### exclude duplicate users 
+data <- data %>% filter(!user_id %in% data_dups$user_id)
+
+##extract date from time stamp 
+data <- data %>% mutate(Test_Date = date(timestamp))
+
+```
+
+
+## Data analysis and Visulization
+```{r}
+
+##CVR trend chart for understanding performance over the days 
+data %>% group_by(Test_Date, group) %>% summarise(converted = sum(converted),
+                                                                counts =n(),
+                                                                CVR = percent(sum(converted/n()))) %>%
+ filter(converted >= 485L & converted <= 860L) %>%
+ ggplot() +
+  aes(x = Test_Date, y = converted, colour = group) +
+  geom_line(size = 0.5) +
+  scale_color_hue(direction = 1) +
+  labs(x = "Test Date", y = "CVR", title = "CVR Trend") +
+  theme_minimal()
+
+## CVR Box Plot for understanding limits and data spread 
+
+data %>% group_by(Test_Date, group) %>% summarise(converted = sum(converted),
+                                                                counts =n(),
+                                                                CVR = percent(sum(converted/n()))) %>%
+ filter(converted >= 490L & converted <= 860L) %>%
+ ggplot() +
+  aes(x = group, y = CVR, fill = group) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  labs(title = "CVR Box Plot") +
+  theme_minimal()
+
+
+## Density plot 
+
+data %>% group_by(Test_Date, group) %>% summarise(converted = sum(converted),
+                                                                counts =n(),
+                                                                CVR = percent(sum(converted/n())))  %>%
+ filter(converted >= 450L & converted <= 860L) %>%
+ ggplot() +
+  aes(x = CVR, fill = group, colour = group) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  scale_color_hue(direction = 1) +
+  labs(title = "Density Plot") +
+  theme_minimal()
+
+```
+
+
+## AB Test reults and statistics 
+```{r}
+
+Test_Results <- data %>% group_by(group) %>% summarise(converted = sum(converted),
+                                                                counts =n(),
+                                                                CVR =percent(sum(converted/n())))
+
+CVR_lift <-  percent((((data%>%  summarise(t_sales = mean(case_when(group == "treatment" ~ converted), na.rm=TRUE)))/
+(summarise(data,c_sales = mean(case_when(group == "control" ~ converted), na.rm=TRUE))))-1),2)
+
+
+
+## prop.test() for proportions 
+prop.test(x = c(Test_Results[Test_Results$group=="control",]$converted, Test_Results[Test_Results$group=="treatment",]$converted ), 
+          n = c(Test_Results[Test_Results$group=="control",]$counts , Test_Results[Test_Results$group=="treatment",]$counts ), 
+          alternative = "two.sided")
+
+```
+
+
+
+
+
+
